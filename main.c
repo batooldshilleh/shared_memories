@@ -4,21 +4,45 @@
 #include <sys/mman.h>
 #include <sys/wait.h>
 #include <time.h>
+#include <sys/stat.h>
+#include <fcntl.h>
 
 int main(){
 
         //Define variables
-        int i, j,s;
-	const int N = 80;
-	const int M = 8+5;
-	double *shared_array_1 = mmap(NULL, N * sizeof(double), PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, -1, 0);
-        double *shared_array_2 = mmap(NULL, N * sizeof(double), PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, -1, 0);
-        double *shared_result = mmap(NULL, N * sizeof(double), PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, -1, 0);
-        double *result = malloc(sizeof(double) * N);
+        int i, j,rank;
+	const int N = 10;
+	const int M = 3;
+	int remainder=N%M;
+	int portion_size = N / M;
+	double *result = malloc(sizeof(double) * N);
          pid_t pid[M], wpid;
         int state =0;
         clock_t start_time, end_time,start_time_shared, end_time_shared;
         double time_taken,time_taken_shared;
+        int start_index ,end_index;
+        
+        //sharedarray
+
+        const char* SHARED_ARRAY_1_NAME = "/shared_array_1";
+        const char* SHARED_ARRAY_2_NAME = "/shared_array_2";
+        const char* SHARED_RESULT_NAME = "/shared_result";
+
+        // create shared memory segment for shared_array_1
+       int shared_array_1_fd = shm_open(SHARED_ARRAY_1_NAME, O_CREAT | O_RDWR, 0666);
+       ftruncate(shared_array_1_fd, N * sizeof(double));
+       double* shared_array_1 = (double*)mmap(NULL, N * sizeof(double), PROT_READ | PROT_WRITE, MAP_SHARED, shared_array_1_fd, 0);
+
+       // create shared memory segment for shared_array_2
+       int shared_array_2_fd = shm_open(SHARED_ARRAY_2_NAME, O_CREAT | O_RDWR, 0666);
+       ftruncate(shared_array_2_fd, N * sizeof(double));
+       double* shared_array_2 = (double*)mmap(NULL, N * sizeof(double), PROT_READ | PROT_WRITE, MAP_SHARED, shared_array_2_fd, 0);
+
+       // create shared memory segment for shared_result
+       int shared_result_fd = shm_open(SHARED_RESULT_NAME, O_CREAT | O_RDWR, 0666);
+       ftruncate(shared_result_fd, N * sizeof(double));
+       double* shared_result = (double*)mmap(NULL, N * sizeof(double), PROT_READ | PROT_WRITE, MAP_SHARED, shared_result_fd, 0);
+        
        
         
         //Initialize arrays
@@ -42,32 +66,30 @@ int main(){
        for (i =0 ; i < M; i++){
                 
                 pid[i] = fork();
-                
        		if (pid[i] == 0) {
-		    int start = i * (N / M);
-		    int end = (i + 1) * (N / M);
+       		// Determine the portion of the array to process
+		    if (i < remainder) {
+                      start_index = i * (portion_size + 1);
+                      end_index = start_index + portion_size;
+                         } 
+                   else {
+                         start_index = i * portion_size + remainder;
+                         end_index = start_index + portion_size - 1;
+            }
                     
             // Compute the sum for the current process
-            for (j = start; j <= end; j++) {
+            for (int j = start_index; j <= end_index; j++) {
                 shared_result[j] = shared_array_1[j] + shared_array_2[j];
-                 if(j != N)
-                   s = j;
             }
-
-            
-            
-             
-            exit(0);
-           
-        }
-       
-        
-        // remaining few items in the parent process
-        for(s; s < N ; s++)
-        shared_result[s] = shared_array_1[s] + shared_array_2[s];
-       } 
-       
-       
+              exit(0);   
+         }
+            // Parent process
+              else {
+            continue;
+           }
+   
+      }       
+     
       //Wait
        for(i=0;i<M;i++){
        		 wpid = waitpid(pid[i],&state,0);
@@ -76,21 +98,22 @@ int main(){
        			exit(1);
        		}
        }
+       
        end_time_shared = clock();
        time_taken_shared = ((double) (end_time_shared - start_time_shared)) / CLOCKS_PER_SEC;
-       
        
       // Check the result 
       for (i = 0; i < N; i++) {
         if (result[i] != shared_result[i]) {
-            printf("Error: result[%d] = %lf, shared_result[%d] = %lf\n", i, result[i], i, shared_result[i]);
+            printf("Error: result[%d] = %.2lf, shared_result[%d] = %.2lf\n", i, result[i], i, shared_result[i]);
         }
         else{
-            printf("Sucsess: result[%d] = %lf, shared_result[%d] = %lf\n", i, result[i], i, shared_result[i]);
+            printf("Sucsess: result[%d] = %.2lf, shared_result[%d] = %.2lf\n", i, result[i], i, shared_result[i]);
         }
     }
     printf("Time taken: %f seconds\n", time_taken);
     printf("Time taken parallel: %f seconds\n", time_taken_shared);
+    printf("%d  , %d \n",remainder , portion_size);
 
 	return 0;
 }
